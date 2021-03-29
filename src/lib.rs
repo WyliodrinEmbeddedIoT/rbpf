@@ -25,6 +25,7 @@ extern crate byteorder;
 extern crate combine;
 extern crate time;
 
+use std::convert::TryInto;
 use std::u32;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
@@ -276,7 +277,7 @@ impl<'a> EbpfVmMbuff<'a> {
     /// ```
     #[allow(unknown_lints)]
     #[allow(cyclomatic_complexity)]
-    pub fn execute_program(&self, mem: &[u8], mbuff: &[u8]) -> Result<u64, Error> {
+    pub fn execute_program(&self, mem: &mut [u8], mbuff: &[u8]) -> Result<u64, Error> {
         const U32MAX: u64 = u32::MAX as u64;
 
         let prog = match self.prog { 
@@ -297,10 +298,10 @@ impl<'a> EbpfVmMbuff<'a> {
             reg[1] = mem.as_ptr() as u64;
         }
 
-        let check_mem_load = | addr: u64, len: usize, insn_ptr: usize | {
+        let check_mem_load = | mem: &mut [u8], addr: u64, len: usize, insn_ptr: usize | {
             EbpfVmMbuff::check_mem(addr, len, "load", insn_ptr, mbuff, mem, &stack)
         };
-        let check_mem_store = | addr: u64, len: usize, insn_ptr: usize | {
+        let check_mem_store = | mem: &mut [u8], addr: u64, len: usize, insn_ptr: usize | {
             EbpfVmMbuff::check_mem(addr, len, "store", insn_ptr, mbuff, mem, &stack)
         };
 
@@ -318,45 +319,61 @@ impl<'a> EbpfVmMbuff<'a> {
                 // LD_ABS_* and LD_IND_* are supposed to load pointer to data from metadata buffer.
                 // Since this pointer is constant, and since we already know it (mem), do not
                 // bother re-fetching it, just use mem already.
-                ebpf::LD_ABS_B   => reg[0] = unsafe {
+                ebpf::LD_ABS_B   => reg[0] = {
                     let x = (mem.as_ptr() as u64 + (insn.imm as u32) as u64) as *const u8;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_ABS_B {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] as u64
                 },
-                ebpf::LD_ABS_H   => reg[0] = unsafe {
+                ebpf::LD_ABS_H   => reg[0] = {
                     let x = (mem.as_ptr() as u64 + (insn.imm as u32) as u64) as *const u16;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_ABS_H {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 1]) as u64
                 },
-                ebpf::LD_ABS_W   => reg[0] = unsafe {
+                ebpf::LD_ABS_W   => reg[0] = {
                     let x = (mem.as_ptr() as u64 + (insn.imm as u32) as u64) as *const u32;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_ABS_W {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 24 + mem[(x as usize - mem.as_ptr() as usize) + 1] << 16 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 2] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 3]) as u64
                 },
-                ebpf::LD_ABS_DW  => reg[0] = unsafe {
+                ebpf::LD_ABS_DW  => reg[0] = {
                     let x = (mem.as_ptr() as u64 + (insn.imm as u32) as u64) as *const u64;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_ABS_DW {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 56 + mem[(x as usize - mem.as_ptr() as usize) + 1] << 48 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 2] << 40 + mem[(x as usize - mem.as_ptr() as usize) + 3] << 32 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 4] << 24 + mem[(x as usize - mem.as_ptr() as usize) + 5] << 16 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 6] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 7]) as u64
                 },
-                ebpf::LD_IND_B   => reg[0] = unsafe {
+                ebpf::LD_IND_B   => reg[0] = {
                     let x = (mem.as_ptr() as u64 + reg[_src] + (insn.imm as u32) as u64) as *const u8;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_IND_B {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] as u64
                 },
-                ebpf::LD_IND_H   => reg[0] = unsafe {
+                ebpf::LD_IND_H   => reg[0] = {
                     let x = (mem.as_ptr() as u64 + reg[_src] + (insn.imm as u32) as u64) as *const u16;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_IND_H {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 1]) as u64
                 },
-                ebpf::LD_IND_W   => reg[0] = unsafe {
+                ebpf::LD_IND_W   => reg[0] = {
                     let x = (mem.as_ptr() as u64 + reg[_src] + (insn.imm as u32) as u64) as *const u32;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_IND_W {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 24 + mem[(x as usize - mem.as_ptr() as usize) + 1] << 16 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 2] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 3]) as u64
                 },
-                ebpf::LD_IND_DW  => reg[0] = unsafe {
+                ebpf::LD_IND_DW  => reg[0] = {
                     let x = (mem.as_ptr() as u64 + reg[_src] + (insn.imm as u32) as u64) as *const u64;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_IND_DW {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 56 + mem[(x as usize - mem.as_ptr() as usize) + 1] << 48 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 2] << 40 + mem[(x as usize - mem.as_ptr() as usize) + 3] << 32 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 4] << 24 + mem[(x as usize - mem.as_ptr() as usize) + 5] << 16 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 6] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 7]) as u64
                 },
 
                 ebpf::LD_DW_IMM  => {
@@ -366,79 +383,121 @@ impl<'a> EbpfVmMbuff<'a> {
                 },
 
                 // BPF_LDX class
-                ebpf::LD_B_REG   => reg[_dst] = unsafe {
+                ebpf::LD_B_REG   => reg[_dst] = {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_src] as *const u8).offset(insn.off as isize) as *const u8;
-                    check_mem_load(x as u64, 1, insn_ptr)?;
-                    *x as u64
+                    let x = (reg[_src] as u64 + insn.off as u64) as *const u8;
+                    check_mem_load(mem, x as u64, 1, insn_ptr)?;
+                    // println!("LD_B_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] as u64
                 },
-                ebpf::LD_H_REG   => reg[_dst] = unsafe {
+                ebpf::LD_H_REG   => reg[_dst] = {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_src] as *const u8).offset(insn.off as isize) as *const u16;
-                    check_mem_load(x as u64, 2, insn_ptr)?;
-                    *x as u64
+                    let x = (reg[_src] as u64 + insn.off as u64) as *const u16;
+                    check_mem_load(mem, x as u64, 2, insn_ptr)?;
+                    // println!("LD_H_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 1]) as u64
                 },
-                ebpf::LD_W_REG   => reg[_dst] = unsafe {
+                ebpf::LD_W_REG   => reg[_dst] = {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_src] as *const u8).offset(insn.off as isize) as *const u32;
-                    check_mem_load(x as u64, 4, insn_ptr)?;
-                    *x as u64
+                    let x = (reg[_src] as u64 + insn.off as u64) as *const u32;
+                    check_mem_load(mem, x as u64, 4, insn_ptr)?;
+                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize)] as u32) << 24 + (mem[(x as usize - mem.as_ptr() as usize) + 1] as u32) << 16);
+                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 1] as u32) << 16);
+                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 2] as u32) << 8);
+                    // println!("LD_W_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize) + 3] as u32);
+                    let val = u32::from_be_bytes([mem[(x as usize - mem.as_ptr() as usize)], mem[(x as usize - mem.as_ptr() as usize) + 1],
+                        mem[(x as usize - mem.as_ptr() as usize) + 2], mem[(x as usize - mem.as_ptr() as usize) + 3]]);
+                    val as u64
                 },
-                ebpf::LD_DW_REG  => reg[_dst] = unsafe {
+                ebpf::LD_DW_REG  => reg[_dst] = {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_src] as *const u8).offset(insn.off as isize) as *const u64;
-                    check_mem_load(x as u64, 8, insn_ptr)?;
-                    *x as u64
+                    let x = (reg[_src] as u64 + insn.off as u64) as *const u64;
+                    check_mem_load(mem, x as u64, 8, insn_ptr)?;
+                    // println!("LD_DW_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    (mem[(x as usize - mem.as_ptr() as usize)] << 56 + mem[(x as usize - mem.as_ptr() as usize) + 1] << 48 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 2] << 40 + mem[(x as usize - mem.as_ptr() as usize) + 3] << 32 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 4] << 24 + mem[(x as usize - mem.as_ptr() as usize) + 5] << 16 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 6] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 7]) as u64
                 },
 
                 // BPF_ST class
-                ebpf::ST_B_IMM   => unsafe {
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u8;
-                    check_mem_store(x as u64, 1, insn_ptr)?;
-                    *x = insn.imm as u8;
+                ebpf::ST_B_IMM   => {
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u8;
+                    check_mem_store(mem, x as u64, 1, insn_ptr)?;
+                    // println!("ST_B_IMM {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] = insn.imm as u8;
                 },
-                ebpf::ST_H_IMM   => unsafe {
+                ebpf::ST_H_IMM   => {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u16;
-                    check_mem_store(x as u64, 2, insn_ptr)?;
-                    *x = insn.imm as u16;
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u16;
+                    check_mem_store(mem, x as u64, 2, insn_ptr)?;
+                    // println!("ST_H_IMM {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] = insn.imm as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 1] = (insn.imm >> 8) as u8;
                 },
-                ebpf::ST_W_IMM   => unsafe {
+                ebpf::ST_W_IMM   => {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u32;
-                    check_mem_store(x as u64, 4, insn_ptr)?;
-                    *x = insn.imm as u32;
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u32;
+                    check_mem_store(mem, x as u64, 4, insn_ptr)?;
+                    // println!("ST_W_IMM {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] = insn.imm as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 1] = (insn.imm >> 8) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 2] = (insn.imm >> 16) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 3] = (insn.imm >> 24) as u8;
                 },
-                ebpf::ST_DW_IMM  => unsafe {
+                ebpf::ST_DW_IMM  => {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u64;
-                    check_mem_store(x as u64, 8, insn_ptr)?;
-                    *x = insn.imm as u64;
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u64;
+                    check_mem_store(mem, x as u64, 8, insn_ptr)?;
+                    // println!("ST_DW_IMM {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] = insn.imm as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 1] = (insn.imm >> 8) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 2] = (insn.imm >> 16) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 3] = (insn.imm >> 24) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 4] = (insn.imm as u64 >> 32) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 5] = (insn.imm as u64 >> 40) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 6] = (insn.imm as u64 >> 48) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 7] = (insn.imm as u64 >> 56) as u8;
                 },
 
                 // BPF_STX class
-                ebpf::ST_B_REG   => unsafe {
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u8;
-                    check_mem_store(x as u64, 1, insn_ptr)?;
-                    *x = reg[_src] as u8;
+                ebpf::ST_B_REG   => {
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u8;
+                    check_mem_store(mem, x as u64, 1, insn_ptr)?;
+                    // println!("ST_B_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] = reg[_src] as u8;
                 },
-                ebpf::ST_H_REG   => unsafe {
+                ebpf::ST_H_REG   => {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u16;
-                    check_mem_store(x as u64, 2, insn_ptr)?;
-                    *x = reg[_src] as u16;
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u16;
+                    check_mem_store(mem, x as u64, 2, insn_ptr)?;
+                    // println!("ST_H_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] = reg[_src] as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 1] = (reg[_src] >> 8) as u8;
                 },
-                ebpf::ST_W_REG   => unsafe {
+                ebpf::ST_W_REG   => {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u32;
-                    check_mem_store(x as u64, 4, insn_ptr)?;
-                    *x = reg[_src] as u32;
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u32;
+                    check_mem_store(mem, x as u64, 4, insn_ptr)?;
+                    // println!("ST_W_REG {:#x}", reg[_src] as u32);
+                    mem[(x as usize - mem.as_ptr() as usize)] = reg[_src] as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 1] = (reg[_src] >> 8) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 2] = (reg[_src] >> 16) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 3] = (reg[_src] >> 24) as u8;
                 },
-                ebpf::ST_DW_REG  => unsafe {
+                ebpf::ST_DW_REG  => {
                     #[allow(cast_ptr_alignment)]
-                    let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u64;
-                    check_mem_store(x as u64, 8, insn_ptr)?;
-                    *x = reg[_src] as u64;
+                    let x = (reg[_dst] as u64 + insn.off as u64) as *mut u64;
+                    check_mem_store(mem, x as u64, 8, insn_ptr)?;
+                    // println!("ST_DW_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
+                    mem[(x as usize - mem.as_ptr() as usize)] = reg[_src] as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 1] = (reg[_src] >> 8) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 2] = (reg[_src] >> 16) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 3] = (reg[_src] >> 24) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 4] = (reg[_src] >> 32) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 5] = (reg[_src] >> 40) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 6] = (reg[_src] >> 48) as u8;
+                    mem[(x as usize - mem.as_ptr() as usize) + 7] = (reg[_src] >> 56) as u8;
                 },
                 ebpf::ST_W_XADD  => unimplemented!(),
                 ebpf::ST_DW_XADD => unimplemented!(),
@@ -1123,7 +1182,7 @@ impl<'a> EbpfVmRaw<'a> {
     /// ```
     pub fn new(prog: Option<&'a [u8]>) -> Result<EbpfVmRaw<'a>, Error> {
         let parent = EbpfVmMbuff::new(prog)?;
-         Ok(EbpfVmRaw {
+        Ok(EbpfVmRaw {
             parent: parent,
         })
     }
