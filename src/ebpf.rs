@@ -437,38 +437,6 @@ impl Insn {
             (self.imm as u32 & 0xff_00_00_00).wrapping_shr(24) as u8,
         ]
     }
-
-    /// Turn an `Insn` into an vector of bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rbpf::ebpf;
-    ///
-    /// let prog: Vec<u8> = vec![
-    ///     0xb7, 0x12, 0x56, 0x34, 0xde, 0xbc, 0x9a, 0x78,
-    ///     ];
-    /// let insn = ebpf::Insn {
-    ///     opc: 0xb7,
-    ///     dst: 2,
-    ///     src: 1,
-    ///     off: 0x3456,
-    ///     imm: 0x789abcde
-    /// };
-    /// assert_eq!(insn.to_vec(), prog);
-    /// ```
-    pub fn to_vec(&self) -> Vec<u8> {
-        vec![
-            self.opc,
-            self.src.wrapping_shl(4) | self.dst,
-            (self.off & 0xff) as u8,
-            self.off.wrapping_shr(8) as u8,
-            (self.imm & 0xff) as u8,
-            (self.imm & 0xff_00).wrapping_shr(8) as u8,
-            (self.imm as u32 & 0xff_00_00).wrapping_shr(16) as u8,
-            (self.imm as u32 & 0xff_00_00_00).wrapping_shr(24) as u8,
-        ]
-    }
 }
 
 /// Get the instruction at `idx` of an eBPF program. `idx` is the index (number) of the
@@ -518,65 +486,4 @@ pub fn get_insn(prog: &[u8], idx: usize) -> Insn {
         off: LittleEndian::read_i16(&prog[(INSN_SIZE * idx + 2) .. ]),
         imm: LittleEndian::read_i32(&prog[(INSN_SIZE * idx + 4) .. ]),
     }
-}
-
-/// Return a vector of `struct Insn` built from a program.
-///
-/// This is provided as a convenience for users wishing to manipulate a vector of instructions, for
-/// example for dumping the program instruction after instruction with a custom format.
-///
-/// Note that the two parts of `LD_DW_IMM` instructions (spanning on 64 bits) are considered as two
-/// distinct instructions.
-///
-/// # Examples
-///
-/// ```
-/// use rbpf::ebpf;
-///
-/// let prog = &[
-///     0x18, 0x00, 0x00, 0x00, 0x88, 0x77, 0x66, 0x55,
-///     0x00, 0x00, 0x00, 0x00, 0x44, 0x33, 0x22, 0x11,
-///     0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-/// ];
-///
-/// let v = ebpf::to_insn_vec(prog);
-/// assert_eq!(v, vec![
-///     ebpf::Insn {
-///         opc: 0x18,
-///         dst: 0,
-///         src: 0,
-///         off: 0,
-///         imm: 0x55667788
-///     },
-///     ebpf::Insn {
-///         opc: 0,
-///         dst: 0,
-///         src: 0,
-///         off: 0,
-///         imm: 0x11223344
-///     },
-///     ebpf::Insn {
-///         opc: 0x95,
-///         dst: 0,
-///         src: 0,
-///         off: 0,
-///         imm: 0
-///     },
-/// ]);
-/// ```
-pub fn to_insn_vec(prog: &[u8]) -> Vec<Insn> {
-    if prog.len() % INSN_SIZE != 0 {
-        panic!("Error: eBPF program length must be a multiple of {:?} octets",
-               INSN_SIZE);
-    }
-
-    let mut res = vec![];
-    let mut insn_ptr:usize = 0;
-
-    while insn_ptr * INSN_SIZE < prog.len() {
-        let insn = get_insn(prog, insn_ptr);
-        res.push(insn);
-        insn_ptr += 1;
-    };
-    res
 }

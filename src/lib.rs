@@ -28,11 +28,7 @@ extern crate time;
 use std::u32;
 use std::io::{Error, ErrorKind};
 
-pub mod assembler;
-pub mod disassembler;
 pub mod ebpf;
-pub mod insn_builder;
-mod asm_parser;
 #[cfg(not(windows))]
 mod verifier;
 
