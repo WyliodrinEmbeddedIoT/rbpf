@@ -194,17 +194,18 @@ impl<'a> EbpfVmRaw<'a> {
     pub fn execute_program(&self, mem: &mut [u8]) -> Result<u64, Error> {
         const U32MAX: u64 = u32::MAX as u64;
 
-        // println!("{:?}", mem.len());
+        println!("{:?}", mem.len());
         let prog = match self.prog { 
             Some(prog) => prog,
             None => Err(Error::new(ErrorKind::Other,
                         "Error: No program set, call prog_set() to load one"))?,
         };
-        let stack = vec![0u8;ebpf::STACK_SIZE];
+        
+        let stack = mem.as_ptr() as u64 + mem.len() as u64 - ebpf::STACK_SIZE as u64;
 
         // R1 points to beginning of memory area, R10 to stack
         let mut reg: [u64;11] = [
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, stack.as_ptr() as u64 + stack.len() as u64
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, stack as u64 + ebpf::STACK_SIZE as u64
         ];
         
         if !mem.is_empty() {
@@ -212,10 +213,10 @@ impl<'a> EbpfVmRaw<'a> {
         }
 
         let check_mem_load = | mem: &mut [u8], addr: u64, len: usize, insn_ptr: usize | {
-            EbpfVmRaw::check_mem(addr, len, "load", insn_ptr, mem, &stack)
+            EbpfVmRaw::check_mem(addr, len, "load", insn_ptr, mem, stack)
         };
         let check_mem_store = | mem: &mut [u8], addr: u64, len: usize, insn_ptr: usize | {
-            EbpfVmRaw::check_mem(addr, len, "store", insn_ptr, mem, &stack)
+            EbpfVmRaw::check_mem(addr, len, "store", insn_ptr, mem, stack)
         };
 
         // Loop on instructions
@@ -552,11 +553,11 @@ impl<'a> EbpfVmRaw<'a> {
     }
 
     fn check_mem(addr: u64, len: usize, access_type: &str, insn_ptr: usize,
-             mem: &[u8], stack: &[u8]) -> Result<(), Error> {
+             mem: &[u8], stack: u64) -> Result<(), Error> {
         if mem.as_ptr() as u64 <= addr && addr + len as u64 <= mem.as_ptr() as u64 + mem.len() as u64 {
             return Ok(())
         }
-        if stack.as_ptr() as u64 <= addr && addr + len as u64 <= stack.as_ptr() as u64 + stack.len() as u64 {
+        if stack <= addr && addr + len as u64 <= stack + ebpf::STACK_SIZE as u64 {
             return Ok(())
         }
 
@@ -564,7 +565,7 @@ impl<'a> EbpfVmRaw<'a> {
             "Error: out of bounds memory {} (insn #{:?}), addr {:#x}, size {:?}\n mem: {:#x}/{:#x}, stack: {:#x}/{:#x}",
             access_type, insn_ptr, addr, len,
             mem.as_ptr() as u64, mem.len(),
-            stack.as_ptr() as u64, stack.len()
+            stack, ebpf::STACK_SIZE as u64
         )))
     }
 }
