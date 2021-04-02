@@ -194,6 +194,7 @@ impl<'a> EbpfVmRaw<'a> {
     pub fn execute_program(&self, mem: &mut [u8]) -> Result<u64, Error> {
         const U32MAX: u64 = u32::MAX as u64;
 
+        // println!("{:?}", mem.len());
         let prog = match self.prog { 
             Some(prog) => prog,
             None => Err(Error::new(ErrorKind::Other,
@@ -228,7 +229,7 @@ impl<'a> EbpfVmRaw<'a> {
             match insn.opc {
 
                 // BPF_LD class
-                // LD_ABS_* and LD_IND_* are supposed to load pointer to data from metadata buffer.
+                // LD_ABS_* and LD_IND_* are supposed to load pointer to data from buffer.
                 // Since this pointer is constant, and since we already know it (mem), do not
                 // bother re-fetching it, just use mem already.
                 ebpf::LD_ABS_B   => reg[0] = {
@@ -307,20 +308,21 @@ impl<'a> EbpfVmRaw<'a> {
                     let x = (reg[_src] as u64 + insn.off as u64) as *const u16;
                     check_mem_load(mem, x as u64, 2, insn_ptr)?;
                     // println!("LD_H_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
-                    (mem[(x as usize - mem.as_ptr() as usize)] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 1]) as u64
+                    (mem[(x as usize - mem.as_ptr() as usize) + 1] << 8 + mem[(x as usize - mem.as_ptr() as usize)]) as u64
                 },
                 ebpf::LD_W_REG   => reg[_dst] = {
                     #[allow(cast_ptr_alignment)]
                     let x = (reg[_src] as u64 + insn.off as u64) as *const u32;
                     check_mem_load(mem, x as u64, 4, insn_ptr)?;
-                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize)] as u32) << 24 + (mem[(x as usize - mem.as_ptr() as usize) + 1] as u32) << 16);
-                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 1] as u32) << 16);
-                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 2] as u32) << 8);
-                    // println!("LD_W_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize) + 3] as u32);
+                    // println!("{:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 3] as u32) << 24);
+                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 3] as u32) << 24);
+                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 2] as u32) << 16);
+                    // println!("LD_W_REG {:#x}", (mem[(x as usize - mem.as_ptr() as usize) + 1] as u32) << 8);
+                    // println!("LD_W_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)] as u32);
                     // let val = ((mem[(x as usize - mem.as_ptr() as usize)] as u32) << 24 + (mem[(x as usize - mem.as_ptr() as usize) + 1] as u32) << 16 +
                     //     (mem[(x as usize - mem.as_ptr() as usize) + 2] as u32) << 8 + mem[(x as usize - mem.as_ptr() as usize) + 3]) as u64;
-                    let val = u32::from_be_bytes([mem[(x as usize - mem.as_ptr() as usize)], mem[(x as usize - mem.as_ptr() as usize) + 1],
-                        mem[(x as usize - mem.as_ptr() as usize) + 2], mem[(x as usize - mem.as_ptr() as usize) + 3]]);
+                    let val = u32::from_be_bytes([mem[(x as usize - mem.as_ptr() as usize) + 3], mem[(x as usize - mem.as_ptr() as usize) + 2],
+                        mem[(x as usize - mem.as_ptr() as usize) + 1], mem[(x as usize - mem.as_ptr() as usize)]]);
                     val as u64
                 },
                 ebpf::LD_DW_REG  => reg[_dst] = {
@@ -328,10 +330,10 @@ impl<'a> EbpfVmRaw<'a> {
                     let x = (reg[_src] as u64 + insn.off as u64) as *const u64;
                     check_mem_load(mem, x as u64, 8, insn_ptr)?;
                     // println!("LD_DW_REG {:#x}", mem[(x as usize - mem.as_ptr() as usize)]);
-                    (mem[(x as usize - mem.as_ptr() as usize)] << 56 + mem[(x as usize - mem.as_ptr() as usize) + 1] << 48 +
-                        mem[(x as usize - mem.as_ptr() as usize) + 2] << 40 + mem[(x as usize - mem.as_ptr() as usize) + 3] << 32 +
-                        mem[(x as usize - mem.as_ptr() as usize) + 4] << 24 + mem[(x as usize - mem.as_ptr() as usize) + 5] << 16 +
-                        mem[(x as usize - mem.as_ptr() as usize) + 6] << 8 + mem[(x as usize - mem.as_ptr() as usize) + 7]) as u64
+                    (mem[(x as usize - mem.as_ptr() as usize) + 7] << 56 + mem[(x as usize - mem.as_ptr() as usize) + 6] << 48 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 5] << 40 + mem[(x as usize - mem.as_ptr() as usize) + 4] << 32 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 3] << 24 + mem[(x as usize - mem.as_ptr() as usize) + 2] << 16 +
+                        mem[(x as usize - mem.as_ptr() as usize) + 1] << 8 + mem[(x as usize - mem.as_ptr() as usize)]) as u64
                 },
 
                 // BPF_ST class
