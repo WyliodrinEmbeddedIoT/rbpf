@@ -21,15 +21,3 @@ include = [
     "LICENSE*",
     "Cargo.toml",
 ]
-
-[dependencies]
-
-combine = "2.5"
-libc = "0.2"
-time = "0.1"
-byteorder = "1.2"
-
-[dev-dependencies]
-
-elf = "0.0.10"
-json = "0.11"

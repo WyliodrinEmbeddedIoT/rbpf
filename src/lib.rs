@@ -21,10 +21,6 @@
 
 #![cfg_attr(feature = "cargo-clippy", allow(redundant_field_names, single_match, cast_lossless, doc_markdown, match_same_arms, unreadable_literal))]
 
-extern crate byteorder;
-extern crate combine;
-extern crate time;
-
 use std::u32;
 use std::io::{Error, ErrorKind};
 
